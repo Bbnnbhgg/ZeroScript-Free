@@ -67,6 +67,11 @@ Smoke tests (plain Node, no dependencies - run them from this directory):
 - `node test-chatgpt.js` - ChatGPT reply reading (`providers/chatgpt.js`),
   driven against a stub DOM: CodeMirror line joining, the `data-zs-cm`
   MAIN-world tap that long code blocks depend on, and subtree exclusion.
+- `node test-meta.js` - Meta AI mode-picker matching (`providers/meta.js`),
+  driven against a stub DOM: the Instant/Thinking label vocabulary (old
+  Instantané/Réflexion UI included) and Thinking-option discovery, including
+  hidden pickers, all-Instant pickers and the extension's own UI being
+  ignored.
 
 Both print `PASS`/`FAIL` per case and exit non-zero on failure.
 

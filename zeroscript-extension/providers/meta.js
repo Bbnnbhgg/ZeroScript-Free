@@ -37,6 +37,16 @@
 //    the framing is thin; the FULL ZeroScript system prompt (with the "commands
 //    are NOT function calls, just TYPE the JSON" reassurance) defuses it and it
 //    complies. Nothing to do in code - just never bootstrap with a stripped prompt.
+//  - 2026-11-06 (user report, English locale): Meta reworked the response-mode
+//    picker. The old "Instantané/Réflexion" dropdown contents became "Instant /
+//    Answers straight away" and "Thinking / Reasons longer for better", the
+//    old option testid may be gone, and the picker renders as a DIALOG-class
+//    overlay. Critically, leaving it open hides the ZS bar (overlayBlocking)
+//    and blocks the composer, which wedged "Start session" silently (bar gone,
+//    nothing typed, no error visible - the banner renders inside the hidden
+//    bar). ensureThinkMode now matches the option by text, clicks it with real
+//    pointer events, and ALWAYS closes the picker before returning; the
+//    composer write is verified with direct-editor fallbacks (writeComposerText).
 // eslint-disable-next-line no-unused-vars
 const ZSProvider = (() => {
   "use strict";
@@ -62,9 +72,13 @@ const ZSProvider = (() => {
     sendBtn: '[data-testid="composer-send-button"]',
     stopBtn: '[data-testid="composer-stop-button"]',
     newChat: '[data-testid="new-chat-button"]',
-    // Response-mode dropdown: the button shows the current mode ("Instantané" /
-    // "Réflexion"); its menu options are think_fast (Instantané) and think_hard
-    // (Réflexion). We force think_hard - Instantané gives markedly worse replies.
+    // Response-mode dropdown. OLD UI: the button shows the current mode
+    // ("Instantané" / "Réflexion"); its menu options are think_fast (Instantané)
+    // and think_hard (Réflexion). NEW UI (2026-11): the picker offers
+    // "Instant / Answers straight away" and "Thinking / Reasons longer for
+    // better", with no confirmed testids. We always force the hard/thinking
+    // mode - Instant gives markedly worse replies - but never at the cost of
+    // leaving the picker open (see ensureThinkMode).
     modeBtn: '[data-testid="composer-mode-dropdown-button"]',
     modeOptHard: '[data-testid="composer-mode-option-think_hard"]',
     reasoning: '[data-testid="thinking-status"],[data-testid="subagent-cot-list"]',
@@ -311,6 +325,12 @@ const ZSProvider = (() => {
   // Falls back to the on-screen editor if Meta ever drops the textarea.
   const writeEl = () => editorEls().find(isTextareaEditor) || getEditor();
   const editorText = () => {
+    // Read the EFFECTIVE editor. The write path may fall back to the on-screen
+    // node when the mirror textarea is gone or dead (2026-11 composer changes),
+    // and reading a stale mirror would fake an "empty" box - the send
+    // confirmation ("cleared") and the user-send gate both rely on this text.
+    const ve = getEditor();
+    if (ve && !isTextareaEditor(ve) && ve !== writeEl()) return ve.textContent || "";
     const e = writeEl();
     if (!e) return "";
     return isTextareaEditor(e) ? (e.value || "") : (e.textContent || "");
@@ -382,14 +402,29 @@ const ZSProvider = (() => {
   }
 
   // ── Buttons / generation detection ──────────────────────────────────────────
-  const sendButton = () => {
-    const b = document.querySelector(S.sendBtn);
-    return b && b.offsetParent !== null ? b : null;
-  };
-  const stopButton = () => {
-    const b = document.querySelector(S.stopBtn);
-    return b && b.offsetParent !== null ? b : null;
-  };
+  // Send/stop discovery: the 2026-07 testids first; if the composer redesign
+  // renamed them, fall back to an aria-label/testid text match on buttons in
+  // the composer card. A wrong guess here is harmless (the button must still
+  // be enabled and the send is confirmed by the composer clearing).
+  function findControlButton(kind) {
+    const byId = document.querySelector(kind === "send" ? S.sendBtn : S.stopBtn);
+    if (byId && byId.offsetParent !== null) return byId;
+    const card = barAnchor();
+    const scope = card && card.isConnected ? card : document;
+    const re = kind === "send"
+      ? /send|envoyer|envoi|submit|paper/i
+      : /stop|arr[êe]ter|halt/i;
+    for (const btn of scope.querySelectorAll("button")) {
+      if (btn.closest("#zs-root") || btn.offsetParent === null) continue;
+      if (btn.disabled || btn.getAttribute("aria-disabled") === "true") continue;
+      const label = ((btn.getAttribute("aria-label") || "") + " " +
+                     (btn.getAttribute("data-testid") || "")).toLowerCase();
+      if (re.test(label)) return btn;
+    }
+    return null;
+  }
+  const sendButton = () => findControlButton("send");
+  const stopButton = () => findControlButton("stop");
 
   function streamText(item) {
     const b = bodyOf(item);
@@ -528,6 +563,77 @@ const ZSProvider = (() => {
     el.dispatchEvent(new Event("input", { bubbles: true }));
   }
 
+  // Whitespace-insensitive equality: rich editors render paragraphs as
+  // elements with no newline text nodes, so a multi-line write can never be
+  // compared byte-for-byte against the visible editor's textContent. Stripping
+  // ALL whitespace still proves "the text landed" without accepting a partial.
+  const normEq = (a, b) =>
+    (a || "").replace(/\s+/g, "") === (b || "").replace(/\s+/g, "");
+
+  // Type `text` into the composer, VERIFIED. Path 1 is the 2026-07 contract
+  // (hidden mirror textarea drives the visible editor). Paths 2-4 cover a
+  // composer where that mirror is gone or no longer drives anything (the
+  // 2026-11 report): they write the VISIBLE editor directly - a synthetic
+  // paste (Lexical-class editors insert multi-line clipboard text properly),
+  // then line-by-line execCommand (plain contenteditables), then a raw
+  // textContent swap with an input event. Each step is verified before use.
+  async function writeComposerText(text) {
+    const ta = editorEls().find(isTextareaEditor);
+    if (ta) {
+      setTextareaValue(ta, text);
+      await sleep(250);
+      const ve = getEditor();
+      if (ve === ta) return normEq(ta.value, text); // the textarea IS the editor
+      if (ve && normEq(ve.textContent, text)) return true; // mirror drove Lexical
+      // Mirror is dead: fall through and write the visible editor directly.
+    }
+    const ed = getEditor();
+    if (!ed) return false;
+    if (isTextareaEditor(ed)) {
+      setTextareaValue(ed, text);
+      await sleep(150);
+      return normEq(ed.value, text);
+    }
+    ed.focus();
+    // Select existing content so the first insert REPLACES it (never append).
+    try {
+      const sel = window.getSelection();
+      const rng = document.createRange();
+      rng.selectNodeContents(ed);
+      sel.removeAllRanges(); sel.addRange(rng);
+    } catch {}
+    // (a) Synthetic paste - the editor's own clipboard handler does the insert.
+    try {
+      const dt = new DataTransfer();
+      dt.setData("text/plain", text);
+      ed.dispatchEvent(new ClipboardEvent("paste", { bubbles: true, cancelable: true, clipboardData: dt }));
+    } catch {}
+    await sleep(250);
+    if (normEq(ed.textContent, text)) return true;
+    // (b) Line-by-line execCommand - the classic contenteditable write; one
+    // insertLineBreak per newline keeps multi-line payloads (###LUA###) intact.
+    try {
+      const sel = window.getSelection();
+      const rng = document.createRange();
+      rng.selectNodeContents(ed);
+      sel.removeAllRanges(); sel.addRange(rng);
+    } catch {}
+    const lines = String(text).split("\n");
+    for (let i = 0; i < lines.length; i++) {
+      if (lines[i]) { try { document.execCommand("insertText", false, lines[i]); } catch {} }
+      if (i < lines.length - 1) { try { document.execCommand("insertLineBreak"); } catch {} }
+    }
+    await sleep(200);
+    if (normEq(ed.textContent, text)) return true;
+    // (c) Last resort: swap the content and notify React.
+    if (!normEq(ed.textContent, text)) {
+      ed.textContent = text;
+      ed.dispatchEvent(new InputEvent("input", { bubbles: true, cancelable: true, inputType: "insertText", data: text }));
+      await sleep(150);
+    }
+    return normEq(ed.textContent, text);
+  }
+
   async function typeAndSend(text, images) {
     // Images FIRST: staging swaps in the inline image; the mirror textarea still
     // drives the composed text alongside it. Idempotent across the core's up-to-4
@@ -540,11 +646,13 @@ const ZSProvider = (() => {
         diag("meta.tas.attached", { ok, imgId: images.__zsId });
       } catch (e) { diag("meta.tas.attachErr", { msg: String((e && e.message) || e) }); }
     }
-    // Write via the mirror textarea (the controlled input that drives Lexical).
+    // Write the text (verified, with direct-editor fallbacks for a composer the
+    // mirror textarea no longer drives), then send.
     const editor = writeEl();
     if (!editor) throw new Error("Meta AI input box not found");
     editor.focus();
-    setTextareaValue(editor, text);
+    const wrote = await writeComposerText(text);
+    diag("meta.tas.write", { ok: wrote, len: text.length });
     const sendReady = () => {
       const b = sendButton();
       return !!b && !b.disabled && b.getAttribute("aria-disabled") !== "true";
@@ -576,42 +684,149 @@ const ZSProvider = (() => {
     if (b) { try { b.click(); } catch {} }
   }
 
-  // ── Response mode (Instantané vs Réflexion) ─────────────────────────────────
-  // A fresh account defaults to "Instantané" (think_fast), which gives markedly
-  // worse replies; "Réflexion" (think_hard) reasons before answering. Meta REMEMBERS
-  // the last-used mode across chats, so we only need to flip it once when it is on
-  // Instantané - after that new chats open on Réflexion by themselves. The dropdown
-  // is a Radix menu that ignores a plain .click() (it opens on pointerdown), so we
-  // dispatch real pointer events to open it, then click the think_hard option.
-  const modeBtn = () => document.querySelector(S.modeBtn);
-  const isReflexion = () => {
-    const b = modeBtn();
-    return !!b && /r[ée]flexion|think.?hard/i.test((b.textContent || "") + (b.getAttribute("data-testid") || ""));
+  // ── Response mode (Instant vs Thinking / Réflexion) ────────────────────────
+  // A fresh account defaults to the fast mode ("Instantané" / "Instant" /
+  // think_fast), which gives markedly worse replies; the hard mode
+  // ("Réflexion" / "Thinking" / think_hard) reasons before answering. Meta
+  // REMEMBERS the last-used mode across chats, so we only need to flip it once.
+  //
+  // 2026-11 rework: Meta replaced the picker's contents ("Instant / Answers
+  // straight away" vs "Thinking / Reasons longer for better") and it renders as
+  // a DIALOG-class overlay. The old code (a) only recognised the old option
+  // testid, so it opened the picker and clicked nothing, and (b) its Escape
+  // fallback no longer closes the new picker - leaving it open HIDES the ZS
+  // bar (overlayBlocking) and blocks the composer, which wedged "Start
+  // session" with no visible error (banner renders inside the hidden bar).
+  // The rewrite below matches controls by text, clicks with real pointer
+  // events, and ALWAYS closes whatever it opened before returning.
+  const MODE_FAST_TEXT = /instantan[ée]|instant|straight away|answers? straight/i;
+  const MODE_HARD_TEXT = /thinking|r[ée]flexion|think.?hard|reasons? longer/i;
+  const isHardModeText = (t) => !!t && MODE_HARD_TEXT.test(t) && !MODE_FAST_TEXT.test(t);
+
+  // The mode toggle: the old testid, else a short chip inside the composer
+  // card labelled Instant / Thinking / Instantané / Réflexion. Scoped to the
+  // card so the OPEN picker's own "Instant" card is never mistaken for it.
+  function findModeControl() {
+    const byId = document.querySelector(S.modeBtn);
+    if (byId && byId.offsetParent !== null) return byId;
+    const card = barAnchor();
+    if (!card) return null;
+    for (const c of card.querySelectorAll("button,[role=\"button\"]")) {
+      if (c.closest("#zs-root") || c.offsetParent === null) continue;
+      if (c.querySelector("button,[role=\"button\"]")) continue; // a row, not the control
+      const t = (c.textContent || "").trim();
+      if (t.length <= 24 && /^(instant|thinking|instantan[ée]|r[ée]flexion)$/i.test(t)) return c;
+    }
+    return null;
+  }
+  const isReflexionEl = (b) =>
+    !!b && isHardModeText(
+      (b.textContent || "") + " " + (b.getAttribute("data-testid") || "") +
+      " " + (b.getAttribute("data-mode") || ""));
+  const isReflexion = () => isReflexionEl(findModeControl());
+
+  // Dialog/menu/listbox overlays that are on screen and big enough to matter
+  // (same visibility rules as overlayBlocking - rect-based, because fixed-
+  // position portals report offsetParent === null).
+  const visibleOverlays = () =>
+    [...document.querySelectorAll('[role="dialog"],[role="menu"],[role="listbox"]')].filter((d) => {
+      if (d.closest("#zs-root")) return false;
+      const r = d.getBoundingClientRect();
+      return r.width > 40 && r.height > 40 && r.top < innerHeight && r.bottom > 0;
+    });
+  const looksLikeModePicker = (d) => {
+    const t = d.textContent || "";
+    return t.length < 600 && MODE_FAST_TEXT.test(t) && MODE_HARD_TEXT.test(t);
   };
+
+  // The Thinking option inside an open picker: the old testid first, else the
+  // smallest visible clickable row whose text says Thinking/Réflexion without
+  // saying Instant (a row holding BOTH options is a container - excluded).
+  function findThinkingOption() {
+    const byId = document.querySelector(S.modeOptHard);
+    if (byId) return byId;
+    const SEL = 'button,[role="menuitem"],[role="menuitemradio"],[role="option"],[role="radio"],[role="button"],li,div';
+    let best = null;
+    for (const sc of visibleOverlays()) {
+      for (const el of [sc, ...sc.querySelectorAll(SEL)]) {
+        if (el.closest("#zs-root")) continue;
+        const r = el.getBoundingClientRect();
+        if (!r.width || !r.height) continue;
+        const t = (el.textContent || "").trim();
+        if (!t || t.length > 200) continue;
+        if (!isHardModeText(t)) continue;
+        if (!best || t.length < (best.textContent || "").trim().length) best = el;
+      }
+    }
+    return best;
+  }
+
+  // Close every overlay WE opened (plus any visible mode picker, even a
+  // pre-existing one - the composer stays blocked until it is dismissed).
+  // Escape on the layer and the document, then an outside pointer press
+  // (pointerdown/up only, never a click, so no page control activates), then
+  // an explicit close affordance. Verified between attempts.
+  async function closeOpenedOverlays(before) {
+    const ours = () => visibleOverlays().filter((d) => !before.has(d) || looksLikeModePicker(d));
+    for (let i = 0; i < 3 && ours().length; i++) {
+      const d = ours()[0];
+      for (const t of [d, document]) {
+        for (const type of ["keydown", "keyup"]) {
+          try {
+            t.dispatchEvent(new KeyboardEvent(type, {
+              key: "Escape", code: "Escape", keyCode: 27, which: 27,
+              bubbles: true, cancelable: true,
+            }));
+          } catch {}
+        }
+      }
+      await sleep(300);
+      if (!ours().length) break;
+      try {
+        const o = document.documentElement;
+        o.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, cancelable: true, pointerId: 1, pointerType: "mouse", button: 0, clientX: 4, clientY: 4 }));
+        o.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, cancelable: true, pointerId: 1, pointerType: "mouse", button: 0, clientX: 4, clientY: 4 }));
+      } catch {}
+      await sleep(300);
+      if (!ours().length) break;
+      const d2 = ours()[0];
+      const x = [...d2.querySelectorAll("button,[aria-label]")].find((b) =>
+        /close|fermer|dismiss|✕|✖|×/i.test((b.getAttribute("aria-label") || "") + " " + (b.textContent || "").trim()));
+      if (x) { try { x.click(); } catch {} }
+      await sleep(300);
+    }
+    return ours().length === 0;
+  }
+
   let _modeInFlight = false;
   async function ensureThinkMode() {
     if (_modeInFlight) return;
-    const b = modeBtn();
-    if (!b || isReflexion()) return; // absent or already Réflexion → nothing to do
+    const b = findModeControl();
+    if (!b || isReflexionEl(b)) return; // absent or already Thinking → nothing to do
     _modeInFlight = true;
+    const before = new Set(visibleOverlays());
     try {
       const fire = (el, t) =>
         el.dispatchEvent(new PointerEvent(t, { bubbles: true, cancelable: true, pointerId: 1, pointerType: "mouse", button: 0 }));
       fire(b, "pointerdown"); fire(b, "pointerup"); try { b.click(); } catch {}
-      const opened = await waitFor(() => !!document.querySelector(S.modeOptHard), 2000);
+      // NOTE: waitFor returns a BOOLEAN (the provider's own helper), so the
+      // option element is re-queried after the wait, like the old code did.
+      const opened = await waitFor(() => !!findThinkingOption(), 2500);
       if (opened) {
-        const opt = document.querySelector(S.modeOptHard);
-        try { opt.click(); } catch {}
-        await waitFor(isReflexion, 2000);
+        const opt = findThinkingOption();
+        // The new picker's rows ignore a bare .click() like the old Radix
+        // menu did - fire real pointer events, then the click.
+        if (opt) { fire(opt, "pointerdown"); fire(opt, "pointerup"); try { opt.click(); } catch {} }
+        await waitFor(() => { const c = findModeControl(); return !c || isReflexionEl(c); }, 2000);
       }
-      // Close the menu if it is still open (Radix closes on select, but be safe).
-      if (document.querySelector(S.modeOptHard)) {
-        document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
-      }
-      diag("meta.mode.set", { reflexion: isReflexion() });
+      diag("meta.mode.set", { reflexion: isReflexion(), picked: !!opt });
     } catch (e) {
       diag("meta.mode.err", { msg: String((e && e.message) || e) });
     } finally {
+      // ALWAYS dismiss the picker before returning - an open mode dialog
+      // hides the ZS bar and blocks the composer (the silent Start wedge).
+      const closed = await closeOpenedOverlays(before);
+      if (!closed) diag("meta.mode.stuckOpen", {});
       _modeInFlight = false;
     }
   }
@@ -619,9 +834,11 @@ const ZSProvider = (() => {
   // ── Composer readiness ──────────────────────────────────────────────────────
   function enforceComposer() { if (_locked) applyLock(); return { ready: true }; }
   async function ensureComposerReady(reason) {
-    // Force Réflexion before the session runs (Instantané is much weaker). Fire and
-    // forget - readiness never blocks on it (the mode flip is best-effort).
-    ensureThinkMode();
+    // Force Thinking/Réflexion before the session types. AWAITED, not fire-and-
+    // forget: ensureThinkMode now guarantees the picker is closed when it
+    // returns, so the bootstrap never types against an open modal (the old
+    // fire-and-forget is what let a stuck-open picker wedge the whole start).
+    try { await ensureThinkMode(); } catch {}
     diag("mode_ready", { reason, provider: "meta", ready: !!getEditor() });
     return { ready: !!getEditor() };
   }
@@ -685,8 +902,8 @@ const ZSProvider = (() => {
         if (!getEditor()) return;
         const btn = e.target && e.target.closest && e.target.closest("button");
         if (!btn) return;
-        if (btn.closest(S.stopBtn) || btn.matches(S.stopBtn)) { handlers.onNativeStop(); return; }
-        if (!(btn.closest(S.sendBtn) || btn.matches(S.sendBtn))) return;
+        if (btn.closest(S.stopBtn) || btn.matches(S.stopBtn) || btn === stopButton()) { handlers.onNativeStop(); return; }
+        if (!(btn.closest(S.sendBtn) || btn.matches(S.sendBtn) || btn === sendButton())) return;
         if (btn.disabled || btn.getAttribute("aria-disabled") === "true") return;
         if (handlers.isBlocked()) return;
         if (!handlers.isStarted()) {
@@ -784,5 +1001,8 @@ const ZSProvider = (() => {
     scanError, isTooLongMsg, isBusyMsg,
     // actions
     attachImages, clearAttachments, conversationKey, installSendHooks, findToolBlockSpot,
+    // Smoke-test hooks (test-meta.js) - not part of the ZSProvider contract,
+    // same as chatgpt.js exporting textWithout for test-chatgpt.js.
+    isHardModeText, findThinkingOption,
   };
 })();

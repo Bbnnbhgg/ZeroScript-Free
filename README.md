@@ -83,6 +83,10 @@ Go to https://chat.deepseek.com (recommended), https://chatgpt.com, https://gemi
 - Control play-testing
 - **Remember your project across sessions** persistent project memory saved inside your place
 
+## New in 1.5.6
+
+- **Meta AI: "Start session" fixed after the mode-picker rework.** Meta replaced the Instantané/Réflexion dropdown with an "Instant / Thinking" picker, and the old picker left open by the mode switch hid the ZeroScript bar and blocked the composer - Start died silently (bar gone, nothing typed, no error). The Thinking option is now matched by text, clicked with real pointer events, and the picker is always closed before the session types. The composer write is also verified, with direct-editor fallbacks if Meta ever disconnects the input ZeroScript types through.
+
 ## New in 1.5.5
 
 - **DeepSeek: the agent starts again on the new unified model.** DeepSeek merged Instant, Expert and Vision into one model and removed the model picker, which left "Start Roblox agent" stuck on "DeepSeek mode not ready". ZeroScript now recognises the new chat box, switches Search off and starts, with DeepThink left on.

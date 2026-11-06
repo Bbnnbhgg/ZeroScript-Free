@@ -2,6 +2,43 @@
 
 All notable changes to ZeroScript Free are documented here.
 
+## [1.5.6] - 2026-11-06
+
+### Fixed
+- **Meta AI: "Start session" works again after the mode-picker rework.** Meta
+  replaced the Instantané/Réflexion dropdown's contents with an
+  "Instant / Answers straight away" vs "Thinking / Reasons longer for better"
+  picker (English locale; the old `composer-mode-option-think_hard` testid is
+  gone) that renders as a dialog-class overlay. ZeroScript still looked for the
+  old option, so the mode flip opened the picker and clicked nothing - and its
+  Escape fallback no longer closes the new picker. The picker left open HIDES
+  the ZeroScript bar (the extension steps aside for dialogs) and blocks the
+  composer, so the start handshake died with nothing typed and no visible
+  error: the failure banner renders inside the hidden bar. The reported symptom
+  was exactly that - the bar disappears, nothing is typed, Start "does
+  nothing". The Thinking option is now matched by its text (the old testid is
+  still preferred when present), clicked with real pointer events like the old
+  Radix menu needed, and the picker is ALWAYS dismissed before the mode flip
+  returns - Escape on the layer and the document, then an outside pointer
+  press, then an explicit close button, each verified. The composer is also
+  confirmed ready only after the picker is closed.
+- **Meta AI: the composer write is verified, with direct-editor fallbacks.**
+  The system prompt is typed through a hidden mirror textarea that drives the
+  visible editor (the 2026-07 contract). If Meta's composer changes leave that
+  mirror absent or disconnected, ZeroScript now notices (the visible editor
+  never picks the text up) and writes the on-screen editor directly instead -
+  a synthetic paste for Lexical-class editors, then line-by-line
+  `execCommand` inserts that keep multi-line Luau payloads intact, then a raw
+  content swap with an input event. The send/stop buttons also get an
+  aria-label fallback if their testids are ever renamed, and the "composer
+  cleared" signal now reads the on-screen editor, so a dead mirror can no
+  longer fake an empty (or full) box.
+- **New smoke test for the Meta provider** (`node test-meta.js` in
+  `zeroscript-extension/`): pins the mode-label vocabulary (Instant / Thinking
+  / Instantané / Réflexion, old testid, both-options containers rejected) and
+  the Thinking-option discovery against a stub DOM - the 2026-11 picker logic,
+  without needing a live meta.ai.
+
 ## [1.5.5] - 2026-09-10
 
 ### Fixed
