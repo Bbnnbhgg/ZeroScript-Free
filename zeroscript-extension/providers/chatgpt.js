@@ -85,7 +85,12 @@ const ZSProvider = (() => {
     // ever win on a build where none of the first three matches anything - one
     // that is already broken. (2026-10 builds renamed the testids to composer-*;
     // the labelled buttons are what the logged-out form composes with.)
-    submitBtn: "#composer-submit-button, button[data-testid='send-button'], button[data-testid='stop-button'], button[data-testid='composer-send-button'], button[data-testid='composer-stop-button'], button[aria-label='Send message'], button[aria-label='Send prompt']",
+    // Appended, never reordered: querySelector returns the first match in
+    // document order, so the label-based alternatives can only win on a build
+    // where none of the ids/testids matches - one that is already broken.
+    // Safe in both directions because isStopBtn() reads the role off the same
+    // aria-label, so a label-matched stop can never pass as send.
+    submitBtn: "#composer-submit-button, button[data-testid='send-button'], button[data-testid='stop-button'], button[data-testid='composer-send-button'], button[data-testid='composer-stop-button'], button[aria-label='Send message'], button[aria-label='Send prompt'], button[aria-label='Send'], button[aria-label='Stop'], button[aria-label='Stop generating'], button[aria-label='Stop streaming']",
     // Kept for installSendHooks, which needs to recognise a click on the native
     // stop control wherever it lives.
     stopBtn: "button[data-testid='stop-button'], button[data-testid='composer-stop-button'], button[aria-label='Stop streaming']",
@@ -324,11 +329,26 @@ const ZSProvider = (() => {
       const marks = [...k.querySelectorAll(ROLE_SEL)];
       const roles = new Set(marks.map((m) => m.getAttribute("data-conversation-role")));
       if (roles.size <= 1) { out.push(k); continue; }
-      // Split: each role keeps the top-level section of the pair that holds it.
+      // Split: climb from each role marker to the HIGHEST ancestor that still
+      // contains only that one marker.
+      //
+      // NOT the direct child of the pair: on this build there is a wrapper in
+      // between (the node carrying data-content-search-turn-key) that holds BOTH
+      // halves, so climbing that far handed back the same pair twice - every turn
+      // then read as a user message (census: two identical entries, both
+      // roleMarks "user,assistant", both bubble true) and no reply was ever read.
+      // Stopping as soon as a parent would bring in a SECOND marker lands on the
+      // per-message container, whatever the build nests in between.
       for (const m of marks) {
         let n = m;
-        while (n.parentElement && n.parentElement !== k) n = n.parentElement;
-        out.push(n);
+        while (n.parentElement && n.parentElement !== k &&
+               n.parentElement.querySelectorAll(ROLE_SEL).length === 1) {
+          n = n.parentElement;
+        }
+        // Never hand back the marker itself (an sr-only heading has no content);
+        // only reachable if two role headings are direct siblings of the pair.
+        if (n === m && m.parentElement) n = m.parentElement;
+        if (!out.includes(n)) out.push(n);
       }
     }
     return out;
@@ -492,7 +512,14 @@ const ZSProvider = (() => {
   // reply?" virtualization-proof, so this must never come back empty.
   const itemKey = (item) => {
     if (!item || !item.getAttribute) return null;
-    return item.getAttribute("data-message-id") || item.getAttribute("data-turn-key") || null;
+    const own = item.getAttribute("data-message-id") || item.getAttribute("data-turn-key");
+    if (own) return own;
+    // Half of a split pair: it has no id of its own, so borrow the pair's and
+    // suffix the role - two turns sharing one id would make the core think the
+    // reply had already been seen.
+    const host = item.closest ? item.closest("[data-turn-key],[data-message-id]") : null;
+    const hostKey = host ? (host.getAttribute("data-turn-key") || host.getAttribute("data-message-id")) : null;
+    return hostKey ? hostKey + "#" + (role(item) || "?") : null;
   };
   const lastAssistantId = () => itemKey(lastAssistant());
 

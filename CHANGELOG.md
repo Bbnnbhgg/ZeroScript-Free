@@ -68,6 +68,18 @@ All notable changes to ZeroScript Free are documented here.
   to report back. It now writes one line to the browser console describing what
   the page actually contains, so the next redesign is diagnosable from a single
   screenshot instead of a round of guesswork.
+- **ChatGPT: the AI's replies are read again.** This build groups a question and
+  its answer under one message id, with a wrapper in between that holds both
+  halves, so ZeroScript took the pair for a single message of the user's - two
+  identical "turns", no reply anywhere, and an agent that waits forever for an
+  answer that is already on the screen. A pair is now split at the point where
+  the two halves actually diverge, and each half keeps its own author and its own
+  id.
+- **ChatGPT: the send button is found again.** The composer's buttons on this
+  build carry no id, no test attribute and no meaningful class - only a label -
+  and the send button does not exist at all until there is text to send. The
+  labelled buttons are now recognised, with the role still read from the label so
+  a stop button can never be mistaken for send.
 - **ChatGPT: a reply is still recognised when only the user's messages are
   labelled.** The 2026-11 build puts "this is from the user" on a hidden heading
   inside each user message, and nothing equivalent on the AI's replies, so a

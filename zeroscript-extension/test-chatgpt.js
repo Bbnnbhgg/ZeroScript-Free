@@ -184,7 +184,16 @@ function node(tag, attrs, kids) {
     tagName: tag, attrs: attrs || {}, childNodes: kids || [], parentElement: null,
     isConnected: true, offsetParent: {}, classList: { contains: () => false },
     getAttribute(k) { return k in this.attrs ? this.attrs[k] : null; },
-    closest() { return null; },
+    closest(sel) {
+      const sels = String(sel).split(",").map((x) => x.trim());
+      const hit = (n) => sels.some((q) => {
+        const m = q.match(/^\[([a-z-]+)\]$/i);
+        return m ? n.getAttribute(m[1]) !== null : false;
+      });
+      let n = this;
+      while (n) { if (hit(n)) return n; n = n.parentElement; }
+      return null;
+    },
   };
   n.querySelectorAll = (sel) => {
     const m = sel.match(/^\[([a-z-]+)(?:="([^"]*)")?\]$/i);
@@ -225,6 +234,33 @@ global.document.querySelectorAll = (sel) => (sel === "[data-turn-key]" ? [pair] 
 const splitTurns = P.allItems();
 ok("a container holding both roles is split, not merged",
    splitTurns.length === 2 && P.isUserItem(splitTurns[0]) && P.isAssistantItem(splitTurns[1]));
+
+// The real bug: [data-turn-key] is a Q&A PAIR, and an intermediate wrapper
+// (the node carrying data-content-search-turn-key) sits between the pair and the
+// two messages. Climbing to the pair's direct child returned that wrapper - which
+// holds BOTH halves - so the pair was handed back twice, every turn read as a
+// user message, and no reply was ever seen. (Census: two identical entries, both
+// roleMarks "user,assistant", both bubble true.)
+{
+  const uH4 = node("H4", { "data-conversation-role": "user" });
+  const aH4 = node("H4", { "data-conversation-role": "assistant" });
+  const uBubble = node("DIV", { "data-user-message-bubble": "true" });
+  const userTurn = node("DIV", { "data-talvt-turn-state": "complete" }, [uH4, uBubble]);
+  const asstTurn = node("DIV", { "data-talvt-turn-state": "complete" }, [aH4]);
+  const wrap = node("DIV", { "data-content-search-turn-key": "fallback-turn-0" }, [userTurn, asstTurn]);
+  const pairK = node("DIV", { "data-turn-key": "uuid-pair" }, [wrap]);
+
+  global.document.querySelectorAll = (sel) =>
+    (sel === "[data-turn-key]" ? [pairK] : []);
+  const got = P.allItems();
+  ok("a pair is split past the wrapper that holds both halves",
+     got.length === 2 && got[0] === userTurn && got[1] === asstTurn);
+  ok("each half carries its own role",
+     P.isUserItem(got[0]) && P.isAssistantItem(got[1]));
+  ok("the two halves do not share one id",
+     P.itemKey(got[0]) !== P.itemKey(got[1]) &&
+     /^uuid-pair#/.test(P.itemKey(got[0]) || ""));
+}
 
 // ── excludeSel ──────────────────────────────────────────────────────────────
 // The core passes ".zs-chip" so its own injected chip never counts as model
