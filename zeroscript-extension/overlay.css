@@ -1019,3 +1019,98 @@ html.zs-light .zs-tip-sub,
 html.zs-light .zs-rbx-cur,
 html.zs-light .zs-tip-sep { color: #6b7280; }
 html.zs-light .zs-tip-rbx { color: #374151; }
+
+/* ── debug panel ────────────────────────────────────────────────────────────
+   Opened from the ⋯ menu, the popup's Debug button, or Alt+Shift+D. It has to
+   stay usable on a phone (the users least able to open a console), so it is
+   sized in vw and scrolls internally rather than growing past the viewport.   */
+#zs-debug {
+  position: fixed;
+  z-index: 2147483602;
+  top: 6vh;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(440px, 92vw);
+  max-height: 76vh;
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  border-radius: 14px;
+  background: rgba(16, 16, 22, 0.985);
+  color: #e8e8ec;
+  border: 1px solid rgba(129, 140, 248, 0.35);
+  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.55);
+  font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  overflow: hidden;
+}
+#zs-debug[hidden] { display: none; }
+#zs-dbg-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.10);
+  background: rgba(255, 255, 255, 0.04);
+}
+#zs-dbg-logo { font-weight: 700; color: #a5b4fc; letter-spacing: 0.2px; }
+.zs-dbg-sp { flex: 1; }
+#zs-dbg-head button {
+  font: inherit;
+  font-size: 11px;
+  padding: 3px 8px;
+  border-radius: 7px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.07);
+  color: #e8e8ec;
+  cursor: pointer;
+}
+#zs-dbg-head button:hover { background: rgba(255, 255, 255, 0.14); }
+#zs-dbg-body { overflow: auto; padding: 8px 10px 10px; }
+.zs-dbg-sec { margin-bottom: 9px; }
+.zs-dbg-sec h4 {
+  margin: 0 0 4px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.7px;
+  color: #8b93b8;
+}
+.zs-dbg-sec table { width: 100%; border-collapse: collapse; }
+.zs-dbg-sec th,
+.zs-dbg-sec td {
+  text-align: left;
+  vertical-align: top;
+  padding: 2px 6px 2px 0;
+  font-weight: 400;
+  word-break: break-word;
+}
+.zs-dbg-sec th { width: 38%; color: #9aa3c0; }
+.zs-dbg-sec td { color: #e8e8ec; }
+.zs-dbg-log {
+  margin: 0;
+  max-height: 150px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+  font-size: 10.5px;
+  line-height: 1.35;
+  color: #b9c0dc;
+}
+/* Menu entry that opens the panel (not a .zs-tip-opt: it must not be treated
+   as a link to open in a new tab). */
+.zs-dbg-opt {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  width: 100%;
+  padding: 7px 9px;
+  border-radius: 9px;
+  border: 1px solid rgba(129, 140, 248, 0.30);
+  background: rgba(129, 140, 248, 0.12);
+  color: #e8e8ec;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  text-align: left;
+}
+.zs-dbg-opt:hover { background: rgba(129, 140, 248, 0.22); }

@@ -2778,6 +2778,10 @@
            <div class="zs-rbx-grid">${passes}</div>
          </section>
          <section class="zs-menu-sec">
+           <div class="zs-sec-label"><span>Diagnostics</span></div>
+           <button class="zs-dbg-opt" id="zs-dbg-open"><span>Open debug panel</span><span class="zs-tip-sub">what ZeroScript can see on this page</span></button>
+         </section>
+         <section class="zs-menu-sec">
            <div class="zs-sec-label"><span>Custom prompt</span></div>
            <div class="zs-menu-note">Added below the system prompt on every new session. The built-in prompt can't be edited.</div>
            <textarea id="zs-set-text" rows="4" placeholder="e.g. Always comment your Luau code. Prefer small modular scripts."></textarea>
@@ -2793,6 +2797,8 @@
            <div class="zs-set-row"><button id="zs-mcp-add">Add server</button><span id="zs-mcp-status"></span></div>
          </section>`;
       const open = (url) => { try { window.open(url, "_blank", "noopener"); } catch {} menuEl.hidden = true; };
+      const dbgOpenBtn = menuEl.querySelector("#zs-dbg-open");
+      if (dbgOpenBtn) dbgOpenBtn.addEventListener("click", () => { menuEl.hidden = true; toggleDebug(); });
       menuEl.querySelectorAll("button.zs-site-opt, .zs-tip-opt").forEach((b) =>
         b.addEventListener("click", () => open(b.dataset.u)));
       const ta = menuEl.querySelector("#zs-set-text");
@@ -3767,8 +3773,143 @@
       root.appendChild(wrap);
     }
 
+    // ── Debug panel ────────────────────────────────────────────────────────
+    // Every site outage so far has been the same three lookups quietly returning
+    // nothing - the composer, the turns, or the reply container - and the symptom
+    // was always SILENCE: no bar, or a bar that does nothing, with the real cause
+    // visible only in the browser console. A phone user cannot open a console at
+    // all, and a screenshot of one never fits on screen. This puts that state on
+    // the page instead, and it stays reachable from the popup even when the bar
+    // itself is hidden because the composer was not found - exactly when it is
+    // needed. Alt+Shift+D opens it; the popup's Debug button opens it too.
+    let dbgEl = null, dbgTimer = 0;
+    const dbgEsc = (v) => String(v == null ? "" : v).replace(/[&<>"']/g,
+      (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+    function debugSnapshot() {
+      const call = (fn, fb) => { try { const r = fn(); return r === undefined ? fb : r; } catch { return fb === undefined ? "err" : fb; } };
+      const info = call(() => (P.debugInfo && P.debugInfo()) || {}, {});
+      const items = call(() => P.allItems(), []);
+      let user = 0, assistant = 0;
+      for (const it of items) {
+        if (call(() => P.isUserItem(it), false)) user++;
+        else if (call(() => P.isAssistantItem(it), false)) assistant++;
+      }
+      const b = A.bridge || {};
+      return {
+        build: {
+          version: EXT_VERSION,
+          provider: `${P.id} · ${P.displayName || P.id}`,
+          // Only the mobile/desktop distinction ever mattered: it decides which
+          // composer the site serves. A full UA is 200+ chars of noise.
+          mobile: /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent),
+          url: location.href,
+        },
+        composer: info.composer || null,
+        turns: Object.assign({ total: items.length, user, assistant }, info.turns || {}, {
+          chatIsEmpty: call(() => P.chatIsEmpty()),
+          isFreshChat: call(() => P.isFreshChat()),
+          conversationKey: call(() => P.conversationKey(), ""),
+        }),
+        submit: info.submit || null,
+        agent: {
+          started: A.started, starting: A.starting, running: A.running,
+          stopping: A.stopping, stop: A.stop, userStopped: A.userStopped,
+          toolRunning: A.toolRunning, injecting: A.injecting,
+          loopKey: A.loopKey,
+          lastGenAgo: A.lastGenAt ? Math.round((Date.now() - A.lastGenAt) / 1000) + "s" : "-",
+        },
+        bridge: {
+          connected: !!b.connected, mcpAlive: !!b.mcpAlive, studio: b.studio,
+          tools: b.tools || 0,
+          servers: (b.servers || []).map((x) => `${x.id}:${x.alive ? "up" : "down"}${x.tools ? "(" + x.tools + ")" : ""}`).join(" "),
+        },
+        generating: call(() => P.isGenerating()),
+        diag: _diag.slice(-14).map((e) => `${e.iso} ${e.event} ${JSON.stringify(e.data || {})}`.slice(0, 200)),
+      };
+    }
+
+    function dbgTable(obj) {
+      let h = "";
+      for (const k of Object.keys(obj || {})) {
+        const v = obj[k];
+        h += `<tr><th>${dbgEsc(k)}</th><td>${dbgEsc(typeof v === "object" ? JSON.stringify(v) : v)}</td></tr>`;
+      }
+      return `<table>${h}</table>`;
+    }
+    const dbgSection = (title, obj) =>
+      obj ? `<div class="zs-dbg-sec"><h4>${dbgEsc(title)}</h4>${dbgTable(obj)}</div>` : "";
+
+    function renderDebug() {
+      if (!dbgEl) return;
+      const body = dbgEl.querySelector("#zs-dbg-body");
+      if (!body) return;
+      const d = debugSnapshot();
+      body.innerHTML =
+        dbgSection("Build", d.build) +
+        dbgSection("Composer", d.composer) +
+        dbgSection("Turns", d.turns) +
+        dbgSection("Send button", d.submit) +
+        dbgSection("Agent", d.agent) +
+        dbgSection("Bridge", d.bridge) +
+        `<div class="zs-dbg-sec"><h4>Recent events</h4><pre class="zs-dbg-log">` +
+        `${dbgEsc((d.diag || []).join("\n") || "(none yet)")}</pre></div>`;
+    }
+
+    function copyDebug() {
+      const txt = JSON.stringify(debugSnapshot(), null, 2);
+      const done = () => toast("Diagnostics copied ✓");
+      const fallback = () => {
+        try {
+          const ta = document.createElement("textarea");
+          ta.value = txt;
+          ta.style.cssText = "position:fixed;top:0;left:0;opacity:0";
+          (document.documentElement || document.body).appendChild(ta);
+          ta.select();
+          const ok = document.execCommand("copy");
+          ta.remove();
+          if (ok) { done(); return; }
+        } catch {}
+        toast("Copy blocked - select the text instead");
+      };
+      try {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(txt).then(done, fallback);
+          return;
+        }
+      } catch {}
+      fallback();
+    }
+
+    function openDebug() {
+      if (!dbgEl) {
+        dbgEl = document.createElement("div");
+        dbgEl.id = "zs-debug";
+        dbgEl.hidden = true;
+        dbgEl.innerHTML =
+          `<div id="zs-dbg-head"><span id="zs-dbg-logo">ZeroScript debug</span>` +
+          `<span class="zs-dbg-sp"></span>` +
+          `<button id="zs-dbg-refresh" title="Refresh now">↻</button>` +
+          `<button id="zs-dbg-copy" title="Copy as JSON">⧉ Copy</button>` +
+          `<button id="zs-dbg-close" title="Close">✕</button></div>` +
+          `<div id="zs-dbg-body"></div>`;
+        root.appendChild(dbgEl);
+        dbgEl.querySelector("#zs-dbg-close").addEventListener("click", closeDebug);
+        dbgEl.querySelector("#zs-dbg-refresh").addEventListener("click", renderDebug);
+        dbgEl.querySelector("#zs-dbg-copy").addEventListener("click", copyDebug);
+      }
+      dbgEl.hidden = false;
+      renderDebug();
+      if (!dbgTimer) dbgTimer = setInterval(renderDebug, 1000);
+    }
+    function closeDebug() {
+      if (dbgEl) dbgEl.hidden = true;
+      if (dbgTimer) { clearInterval(dbgTimer); dbgTimer = 0; }
+    }
+    function toggleDebug() { if (dbgEl && !dbgEl.hidden) closeDebug(); else openDebug(); }
+
     build();
-    return { setStatus, staleExtensionAlert, setStarted, setStarting, showStop, markStopping, inputCover, toast, banner, showImages, nudgeStart, updateStartGate, refreshSetup, getCustomPrompt, getCustomMcpServers, openMenu: (toSupport) => openMenuFn && openMenuFn(toSupport) };
+    return { setStatus, staleExtensionAlert, setStarted, setStarting, showStop, markStopping, inputCover, toast, banner, showImages, nudgeStart, updateStartGate, refreshSetup, getCustomPrompt, getCustomMcpServers, openMenu: (toSupport) => openMenuFn && openMenuFn(toSupport), openDebug, closeDebug, toggleDebug };
   })();
 
   // ── Live token + timer, shown ONLY on a tool call's chip detail. The
@@ -4025,7 +4166,21 @@
     if (msg && msg.type === "zs-open-menu") {
       ui.openMenu(false); // from the popup's Settings button — opens at the top (Switch AI / custom prompt)
     }
+    if (msg && msg.type === "zs-open-debug") {
+      ui.toggleDebug(); // from the popup's Debug button
+    }
   });
+
+  // Alt+Shift+D opens the debug panel from anywhere on the page. A modifier
+  // combo so it can never fire while the user is typing, and deliberately NOT
+  // Ctrl+Shift+D (Chrome bookmarks all tabs) or a bare letter. e.code rather
+  // than e.key because Alt remaps the key on several layouts.
+  document.addEventListener("keydown", (e) => {
+    if (!e.altKey || !e.shiftKey || e.ctrlKey || e.metaKey) return;
+    if (e.code !== "KeyD") return;
+    e.preventDefault();
+    ui.toggleDebug();
+  }, true);
 
   // Status poll. An orphaned content script (see bg / isContextInvalidated) gets
   // a failure object back whose `connected` is undefined, which setStatus would

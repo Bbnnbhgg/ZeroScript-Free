@@ -85,6 +85,8 @@ Go to https://chat.deepseek.com (recommended), https://chatgpt.com, https://gemi
 
 ## New in 1.5.6
 
+- **A debug panel for when ZeroScript looks dead.** Open it from the extension popup (**🐞 Debug this page**), the ⋯ menu, or **Alt+Shift+D** on the page. It shows what the extension can actually see - did it find the input box, how many messages does it see, can it tell your messages from the AI's, what is the send button doing, and is the bridge and Studio connected - with a Copy button that turns all of it into text you can send to someone. It is reachable from the popup on purpose, because the toolbar is the very thing that goes missing when a site changes.
+
 - **ChatGPT: the "Start Roblox agent" bar is back.** ChatGPT removed the name tag from its input box, and ZeroScript looked for the composer by that one name. Finding nothing, it decided the page was not a chat and hid its own bar - so the Start button never appeared, even though the bridge, Roblox Studio and all your tools were working fine. ZeroScript now recognises the composer by what it is, not by the name it happens to carry.
 
 ## New in 1.5.5

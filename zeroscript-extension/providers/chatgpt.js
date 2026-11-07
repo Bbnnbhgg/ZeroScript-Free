@@ -1224,6 +1224,51 @@ const ZSProvider = (() => {
     return hidAny;
   }
 
+  // ── Debug panel (see core/main.js ui.debug) ───────────────────────────────
+  // Every ChatGPT outage so far was one of three lookups quietly returning
+  // nothing: the composer, the turns, or the reply container - and the symptom
+  // was always silence, so the cause was only ever visible from the console.
+  // Only the provider knows WHICH selector matched, so it reports that itself.
+  function debugInfo() {
+    const desc = (el) => {
+      if (!el) return null;
+      const cls = String(el.className || "").trim().split(/\s+/).slice(0, 2).join(".");
+      return el.tagName + (el.id ? "#" + el.id : "") + (cls ? "." + cls : "");
+    };
+    const items = turnItems();
+    const roles = {};
+    for (const it of items) { const r = role(it) || "unknown"; roles[r] = (roles[r] || 0) + 1; }
+    const ed = getEditor();
+    const sub = submitButton();
+    let turnVia = null;
+    if (items.length) {
+      turnVia = document.querySelector(LEGACY_TURN_SEL) ? LEGACY_TURN_SEL : TURN_SEL;
+    }
+    return {
+      composer: {
+        found: !!ed,
+        via: _edVia || (ed ? EDITOR_SELECTORS[0] : null),
+        node: desc(ed),
+        draftLen: (editorText() || "").length,
+        locked: _locked,
+      },
+      turns: {
+        via: turnVia,
+        roles,
+        lastAssistantKey: lastAssistantId(),
+        // The container replies are read from. If it is renamed, every reply
+        // reads as empty and no command is ever seen.
+        replyContainerPresent: !!document.querySelector(S.reply),
+      },
+      submit: {
+        node: desc(sub),
+        role: sub ? (isStopBtn(sub) ? "stop" : "send") : null,
+        disabled: sub ? !!sub.disabled : null,
+      },
+    };
+  }
+
+
   return {
     id: "chatgpt",
     displayName: "ChatGPT",
@@ -1292,5 +1337,6 @@ const ZSProvider = (() => {
     // every result over ~109k even though ChatGPT would accept the pair fine.
     // The margin absorbs the rider growing with a long user custom prompt.
     sendCharBudget: SEND_HARD_CAP - 4000,
+    debugInfo,
   };
 })();

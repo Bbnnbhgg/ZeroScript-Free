@@ -48,20 +48,36 @@ document.getElementById("restart").addEventListener("click", (e) => {
 document.getElementById("kofi").addEventListener("click", () => {
   chrome.tabs.create({ url: KOFI_URL });
 });
-document.getElementById("settings").addEventListener("click", () => {
-  // Same mechanism as the Ko-fi button (chrome.tabs), but tries the in-page
-  // panel on an already-open supported AI tab first, so opening it doesn't
-  // require a conversation to already be started there.
+// Run `action` on an already-open supported AI tab (the active one if it is
+// supported), or open one if there is none. Shared by Settings and Debug: both
+// are page-side panels, so both need a live tab rather than a new one.
+function withSupportedTab(action) {
   chrome.tabs.query({}, (tabs) => {
-    const active = tabs.find((t) => t.active && t.url && SUPPORTED_HOSTS.some((h) => t.url.includes(h)));
-    const anySupported = active || tabs.find((t) => t.url && SUPPORTED_HOSTS.some((h) => t.url.includes(h)));
-    if (anySupported) {
-      chrome.tabs.sendMessage(anySupported.id, { type: "zs-open-menu" });
-      chrome.tabs.update(anySupported.id, { active: true });
+    const supported = (t) => t.url && SUPPORTED_HOSTS.some((h) => t.url.includes(h));
+    const active = tabs.find((t) => t.active && supported(t));
+    const target = active || tabs.find(supported);
+    if (target) {
+      try { action(target.id); } catch {}
+      chrome.tabs.update(target.id, { active: true });
     } else {
       chrome.tabs.create({ url: DEFAULT_AI_URL });
     }
   });
+}
+
+document.getElementById("settings").addEventListener("click", () => {
+  // Same mechanism as the Ko-fi button (chrome.tabs), but tries the in-page
+  // panel on an already-open supported AI tab first, so opening it doesn't
+  // require a conversation to already be started there.
+  withSupportedTab((id) => chrome.tabs.sendMessage(id, { type: "zs-open-menu" }));
+});
+
+// The debug panel is the one control that must work when everything else looks
+// dead: it reports whether the composer, the turns and the reply container were
+// found, which is exactly what fails silently when a site redesigns. It lives in
+// the page (not here) because only the page can see the site's DOM.
+document.getElementById("debug").addEventListener("click", () => {
+  withSupportedTab((id) => chrome.tabs.sendMessage(id, { type: "zs-open-debug" }));
 });
 
 chrome.runtime.onMessage.addListener((msg) => {

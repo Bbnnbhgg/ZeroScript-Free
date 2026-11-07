@@ -4,6 +4,22 @@ All notable changes to ZeroScript Free are documented here.
 
 ## [1.5.6] - 2026-11-07
 
+### Added
+- **A debug panel, for when ZeroScript looks dead.** Open it from the extension
+  popup (**🐞 Debug this page**), from the ⋯ menu, or with **Alt+Shift+D**. It
+  shows exactly what the extension can see: whether it found the input box (and
+  how), how many messages it found and whether it can tell the user's messages
+  from the AI's, what the send button is currently doing, what the agent thinks
+  it is doing, and the state of the bridge and Roblox Studio - plus the last few
+  internal events and a **Copy** button that puts the whole thing on the
+  clipboard as JSON.
+  Every past outage was one of those lookups quietly returning nothing, and the
+  symptom was always silence: no bar, or a bar that did nothing, with the cause
+  visible only in the browser console. That is unreachable on a phone, and a
+  screenshot of a console never fits on screen. The panel is deliberately
+  reachable from the popup rather than only from the bar, because the bar is
+  exactly what goes missing.
+
 ### Fixed
 - **ChatGPT: the agent runs again.** ChatGPT renamed the parts of the page that
   mark each message: the tag that used to say "this message is from the user /
