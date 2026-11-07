@@ -227,7 +227,51 @@ const ZSProvider = (() => {
   }
 
   // ── DOM primitives ────────────────────────────────────────────────────────
-  const allItems = () => [...document.querySelectorAll(S.msg)];
+  // Turn detection is the single most load-bearing selector in the provider: the
+  // camouflage sweep walks P.allItems() to find and hide the system prompt and
+  // every command block, and turn counting / reply reading hang off it too. When
+  // it matches nothing the agent is not degraded, it is INERT AND SILENT - the
+  // bootstrap prompt stays on screen, no command is ever seen, and the bar
+  // reports an empty chat inside a conversation that is plainly full. That was
+  // unfixable from a screenshot; report what the page DOES have instead.
+  const TURN_PROBES = [
+    "[data-message-author-role]",
+    "[data-message-id]",
+    "[data-testid*='turn']",
+    "[data-testid*='conversation']",
+    "article",
+    "[class*='agent-turn']",
+    "[class*='conversation-turn']",
+  ];
+  let _turnMissAt = 0;
+  function turnMissReport() {
+    const counts = {};
+    for (const sel of TURN_PROBES) {
+      try { counts[sel] = document.querySelectorAll(sel).length; } catch { counts[sel] = "err"; }
+    }
+    // Anything on the page advertising itself as a message/turn, whatever the
+    // current build calls it - this is the part a screenshot can answer.
+    const samples = [];
+    try {
+      for (const el of document.querySelectorAll("*")) {
+        if (samples.length >= 8) break;
+        const attrs = [...el.attributes].filter((a) => /message|turn|author|role/i.test(a.name));
+        if (attrs.length) {
+          samples.push(el.tagName + "." + String(el.className || "").trim().split(/\s+/).slice(0, 3).join(".") +
+            " {" + attrs.slice(0, 4).map((a) => a.name + "=" + String(a.value).slice(0, 20)).join(" ") + "}");
+        }
+      }
+    } catch {}
+    diag("turns.notFound", { counts, samples });
+  }
+  const allItems = () => {
+    const items = [...document.querySelectorAll(S.msg)];
+    if (!items.length) {
+      const now = Date.now();
+      if (now - _turnMissAt > 10000) { _turnMissAt = now; turnMissReport(); } // rAF-hot: throttled
+    }
+    return items;
+  };
   const assistantItems = () => allItems().filter(isAssistantItem);
   const assistantCount = () => assistantItems().length;
   const userCount = () => allItems().filter(isUserItem).length;
