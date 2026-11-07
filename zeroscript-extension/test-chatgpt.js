@@ -152,6 +152,18 @@ global.document.querySelectorAll = qsa({
 });
 ok("a hidden composer twin is skipped, not adopted", P.getEditor() === null);
 
+// A <textarea> composer (logged-out / mobile form): it keeps its text in .value,
+// never in child nodes, so textContent reads as empty - which would have made
+// every "did the composer clear?" and "is the user mid-draft?" test answer
+// "empty" forever.
+const ta = {
+  tagName: "TEXTAREA", isConnected: true, offsetParent: {}, value: "hello",
+  getAttribute: () => null, closest: () => null, querySelector: () => null,
+};
+global.document.querySelectorAll = qsa({ "textarea[name='prompt-textarea']": [ta] });
+ok("a textarea composer is found", P.getEditor() === ta);
+ok("its text is read from .value, not textContent", P.editorText() === "hello");
+
 // ── excludeSel ──────────────────────────────────────────────────────────────
 // The core passes ".zs-chip" so its own injected chip never counts as model
 // output (a chip echoing a tool name would otherwise re-trigger the call).

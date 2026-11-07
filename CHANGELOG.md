@@ -22,6 +22,18 @@ All notable changes to ZeroScript Free are documented here.
   forces itself into a layout it cannot read: a wrong insertion is what collapsed
   the text field to zero width in the past, so "float above it" is always the
   safe fallback.
+- **ChatGPT: the composer is found even when every known name is gone.** Two
+  safety nets, both reached only on a build that would otherwise show no bar at
+  all: if nothing matches, ZeroScript takes the page's ONE visible text box (a
+  chat has exactly one thing you can type into; two or more means it cannot tell
+  them apart, and it refuses rather than guess, because a wrong editor swallows
+  every message). Code blocks are excluded - they are editable too, and adopting
+  one would send results into a read-only block instead of the composer.
+- **ChatGPT: a plain text box is supported.** Some layouts (the logged-out
+  page, mobile browsers) build the composer as a `<textarea>` instead of the
+  rich-text editor. Text is read and written the way that control actually
+  works - through its value, not as page content - so a message typed into it
+  reaches ChatGPT instead of sitting in the box with the send button dead.
 - **ChatGPT: a renamed stop button can no longer be mistaken for send.** The
   send and stop controls are the same button in two roles, and the role used to
   be read from a single attribute. On a build that renamed it, ZeroScript would

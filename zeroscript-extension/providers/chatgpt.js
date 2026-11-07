@@ -260,6 +260,29 @@ const ZSProvider = (() => {
   ];
   let _edCache = null;
   let _edVia = null;
+  // Absolute last resort, reached ONLY on a build where every selector above
+  // missed - i.e. one that is already broken and showing no bar at all. A chat
+  // page has exactly one thing you can type into, so if that is literally true
+  // here, it is the composer. Two or more means we cannot tell them apart (a
+  // conversation-rename field, a search box) and guessing wrong is far worse
+  // than returning null: a wrong editor swallows every injected message.
+  // Code blocks are excluded outright - CodeMirror marks .cm-content
+  // contenteditable too, and adopting one would send our results into a
+  // read-only code block instead of the composer.
+  function soleEditable() {
+    let vis;
+    try {
+      vis = [...document.querySelectorAll('[contenteditable="true"]')].filter(
+        (el) =>
+          el.offsetParent !== null &&
+          !el.closest(".cm-editor, .cm-content, [data-message-author-role], .markdown") &&
+          (el.getBoundingClientRect().width || 0) > 120
+      );
+    } catch { return null; }
+    if (vis.length !== 1) return null;
+    diag("editor.resolved", { via: "sole-visible-contenteditable" });
+    return vis[0];
+  }
   function findEditor() {
     for (const sel of EDITOR_SELECTORS) {
       for (const el of document.querySelectorAll(sel)) {
@@ -275,7 +298,7 @@ const ZSProvider = (() => {
         }
       }
     }
-    return null;
+    return soleEditable();
   }
   function getEditor() {
     if (_edCache && _edCache.isConnected) return _edCache;
@@ -283,9 +306,15 @@ const ZSProvider = (() => {
     if (ed) _edCache = ed;
     return ed;
   }
+  // A <textarea> composer (the logged-out / mobile form) keeps its text in
+  // .value, not in child nodes - textContent is empty there, so every test that
+  // reads this ("did the composer clear after the send?", "is the user mid
+  // draft?") would have answered "empty" forever and the loop would have sat on
+  // a message it believed had already gone out.
   const editorText = () => {
     const e = getEditor();
-    return e ? e.textContent || "" : "";
+    if (!e) return "";
+    return e.tagName === "TEXTAREA" ? e.value || "" : e.textContent || "";
   };
 
   const lastAssistant = () => {
@@ -427,7 +456,11 @@ const ZSProvider = (() => {
     _locked = on;
     const ed = getEditor();
     if (!ed) return;
-    ed.setAttribute("contenteditable", on ? "false" : "true");
+    // contenteditable means nothing to a <textarea> composer; readOnly is the
+    // equivalent there, and - unlike disabled - it still lets us write the
+    // injected message ourselves.
+    if (ed.tagName === "TEXTAREA") ed.readOnly = !!on;
+    else ed.setAttribute("contenteditable", on ? "false" : "true");
     if (on) ed.setAttribute("data-zs-locked", "1");
     else ed.removeAttribute("data-zs-locked");
   }
@@ -693,9 +726,31 @@ const ZSProvider = (() => {
     if (lines.length > INSERT_CHUNK_LINES) diag("send.insertDone", { lines: lines.length, ms: Date.now() - t0 });
   }
 
-  // Typing is the ONLY path for injected sends: it is slower, but it produces a
-  // real inline message instead of a file attachment (see pasteEditorText).
+  // A <textarea> composer (the logged-out / mobile form) has NO child nodes to
+  // select and no editable region for execCommand to write into, so
+  // typeEditorText inserts nothing at all there - the send button never enables
+  // and the message sits in the box. Write .value through the prototype's native
+  // setter instead: assigning `ed.value = x` directly is invisible to React (it
+  // keeps its own copy of the node's value), which is why the input event below
+  // is not optional - it is what makes the site actually see the new text.
+  function setTextareaValue(ed, text) {
+    try {
+      const proto = window.HTMLTextAreaElement && window.HTMLTextAreaElement.prototype;
+      const setter = proto && Object.getOwnPropertyDescriptor(proto, "value");
+      if (setter && setter.set) setter.set.call(ed, text);
+      else ed.value = text;
+    } catch { ed.value = text; }
+    ed.dispatchEvent(new Event("input", { bubbles: true }));
+  }
+
+  // Typing is the ONLY path for injected sends on the ProseMirror composer: it
+  // is slower, but it produces a real inline message instead of a file
+  // attachment (see pasteEditorText). A <textarea> composer needs the value path.
   async function setEditorText(ed, text) {
+    if (ed.tagName === "TEXTAREA") {
+      setTextareaValue(ed, text);
+      return;
+    }
     await typeEditorText(ed, text);
   }
 
@@ -704,7 +759,9 @@ const ZSProvider = (() => {
     if (!ed) throw new Error("ChatGPT input box not found");
     text = truncateForSend(text);
     const relock = _locked;
-    if (relock) ed.setAttribute("contenteditable", "true"); // injection needs it editable
+    // injection needs the composer editable again (a textarea is unlocked by
+    // setTextareaValue's direct write, not by this attribute).
+    if (relock && ed.tagName !== "TEXTAREA") ed.setAttribute("contenteditable", "true");
     try {
       await setEditorText(ed, text);
       // Attach images LAST, right before the send click - see gemini.js/deepseek.js
@@ -740,7 +797,7 @@ const ZSProvider = (() => {
       ed.dispatchEvent(new KeyboardEvent("keydown", o));
       ed.dispatchEvent(new KeyboardEvent("keyup", o));
     } finally {
-      if (relock) { const e2 = getEditor(); if (e2) e2.setAttribute("contenteditable", "false"); }
+      if (relock) { const e2 = getEditor(); if (e2 && e2.tagName !== "TEXTAREA") e2.setAttribute("contenteditable", "false"); }
     }
   }
 
