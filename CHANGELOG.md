@@ -68,6 +68,14 @@ All notable changes to ZeroScript Free are documented here.
   to report back. It now writes one line to the browser console describing what
   the page actually contains, so the next redesign is diagnosable from a single
   screenshot instead of a round of guesswork.
+- **ChatGPT: a reply is still recognised when only the user's messages are
+  labelled.** The 2026-11 build puts "this is from the user" on a hidden heading
+  inside each user message, and nothing equivalent on the AI's replies, so a
+  reply could come back with no author at all - and an author-less message is
+  never read as a command. The visible user bubble is unmistakable, so it stands
+  in for the label. It is only ever used to identify a user message: assuming
+  "not a user bubble" means "AI reply" would invent commands that were never
+  written.
 - **ChatGPT: a renamed stop button can no longer be mistaken for send.** The
   send and stop controls are the same button in two roles, and the role used to
   be read from a single attribute. On a build that renamed it, ZeroScript would

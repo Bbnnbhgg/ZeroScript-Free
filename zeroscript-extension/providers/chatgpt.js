@@ -136,12 +136,21 @@ const ZSProvider = (() => {
   // the role from the turn's own descendant, falling back to the old attribute
   // for builds that still put it on the turn element.
   const ROLE_SEL = "[data-conversation-role]";
+  const USER_BUBBLE_SEL = "[data-user-message-bubble]";
   const role = (item) => {
     if (!item || !item.getAttribute) return null;
     const own = item.getAttribute("data-message-author-role");
     if (own) return own;
     const mark = item.querySelector ? item.querySelector(ROLE_SEL) : null;
-    return mark ? mark.getAttribute("data-conversation-role") : null;
+    if (mark) return mark.getAttribute("data-conversation-role");
+    // Seen in the 2026-11 markup: the role heading exists on the USER turn
+    // (H4.sr-only[data-conversation-role]) and may be absent from the assistant
+    // turn entirely, which would leave no reply readable. The user bubble is
+    // unmistakable, so it can stand in for the marker rather than guessing that
+    // "not a user bubble" means assistant - a wrong assistant match invents
+    // commands that were never written.
+    if (item.querySelector && item.querySelector(USER_BUBBLE_SEL)) return S.userRole;
+    return null;
   };
   const isUserItem = (item) => role(item) === S.userRole;
   const isAssistantItem = (item) => role(item) === S.assistantRole;
@@ -1255,6 +1264,18 @@ const ZSProvider = (() => {
       turns: {
         via: turnVia,
         roles,
+        // Per-turn census: the fastest way to see whether an assistant turn
+        // exists at all, and what it calls itself when it does.
+        census: items.slice(-6).map((it, n) => ({
+          n,
+          role: role(it) || "?",
+          key: String(itemKey(it) || "").slice(0, 8),
+          node: desc(it),
+          attrs: [...it.attributes].slice(0, 6).map((a) => a.name).join(" "),
+          roleMarks: [...it.querySelectorAll(ROLE_SEL)]
+            .map((e) => e.getAttribute("data-conversation-role")).join(",") || "-",
+          bubble: !!(it.querySelector && it.querySelector(USER_BUBBLE_SEL)),
+        })),
         lastAssistantKey: lastAssistantId(),
         // The container replies are read from. If it is renamed, every reply
         // reads as empty and no command is ever seen.
@@ -1264,6 +1285,20 @@ const ZSProvider = (() => {
         node: desc(sub),
         role: sub ? (isStopBtn(sub) ? "stop" : "send") : null,
         disabled: sub ? !!sub.disabled : null,
+        // Nothing matched: name what IS in the composer, so the next rename is
+        // a one-line fix instead of another round of guesswork.
+        candidates: (() => {
+          const form = composerFrame();
+          if (!form) return ["(no composer form)"];
+          const bs = [...form.querySelectorAll("button")].slice(0, 8);
+          return bs.length ? bs.map((b) => {
+            const cls = String(b.className || "").trim().split(/\s+/).slice(0, 2).join(".");
+            return `${b.tagName}${b.id ? "#" + b.id : ""}${cls ? "." + cls : ""}` +
+              ` testid=${b.getAttribute("data-testid") || "-"}` +
+              ` aria=${String(b.getAttribute("aria-label") || "-").slice(0, 20)}` +
+              ` dis=${!!b.disabled}`;
+          }) : ["(no button in the composer form)"];
+        })(),
       },
     };
   }
