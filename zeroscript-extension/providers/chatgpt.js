@@ -7,8 +7,13 @@
 // SUPPORTED_HOSTS + main.js AI_SITES).
 //
 // ChatGPT DOM notes (re-validated live, 2026-08 - chatgpt.com, logged in, fr-FR):
-//  - React app. One message = a <div data-message-author-role="user|assistant">
-//    carrying a stable data-message-id (a UUID). There is NO <article> wrapper
+//  - React app. One message = a turn element. BEFORE 2026-11 that was
+//    <div data-message-author-role="user|assistant"> carrying a stable
+//    data-message-id (a UUID); the 2026-11 build dropped data-message-author-
+//    role entirely and tags the turn with data-turn-key (same UUID) instead,
+//    moving the role onto a screen-reader heading INSIDE the turn
+//    (<h4 class="sr-only" data-conversation-role="user|assistant">). There is no
+//    <article> wrapper in either build. turnItems() + role() handle both.
 //    anymore, so these elements alternate in DOM order and map 1:1 onto the
 //    core's turn expectations. We treat each data-message-author-role div as one
 //    "turn item". Long chats DO get virtualized, so every "is this a new reply"
@@ -125,7 +130,19 @@ const ZSProvider = (() => {
   };
 
   // ── Turn classification ───────────────────────────────────────────────────
-  const role = (item) => (item && item.getAttribute ? item.getAttribute("data-message-author-role") : null);
+  // 2026-11: the role attribute moved OFF the turn element. It now lives on a
+  // screen-reader heading INSIDE the turn (<h4 class="sr-only" data-conversation-
+  // role="user">), while the turn element itself carries data-turn-key. So read
+  // the role from the turn's own descendant, falling back to the old attribute
+  // for builds that still put it on the turn element.
+  const ROLE_SEL = "[data-conversation-role]";
+  const role = (item) => {
+    if (!item || !item.getAttribute) return null;
+    const own = item.getAttribute("data-message-author-role");
+    if (own) return own;
+    const mark = item.querySelector ? item.querySelector(ROLE_SEL) : null;
+    return mark ? mark.getAttribute("data-conversation-role") : null;
+  };
   const isUserItem = (item) => role(item) === S.userRole;
   const isAssistantItem = (item) => role(item) === S.assistantRole;
 
@@ -205,6 +222,18 @@ const ZSProvider = (() => {
     return t;
   }
 
+  // The container(s) holding a turn's rendered reply. Historically .markdown;
+  // on a build that renamed it, reading only .markdown yields an EMPTY reply -
+  // so no command is ever detected and findToolBlockSpot hides nothing (the raw
+  // JSON just sits on screen). Fall back to the turn element itself, which
+  // always contains the text; the chip is excluded by the callers as usual.
+  // Never falls back when .markdown exists, so older builds are untouched.
+  function replyNodes(item) {
+    if (!item) return [];
+    const mds = [...item.querySelectorAll(S.reply)];
+    return mds.length ? mds : [item];
+  }
+
   // Non-reasoning reply text only: join the .markdown container(s). Reasoning
   // renders outside .markdown, so this never sees tool blocks the model merely
   // drafts while thinking.
@@ -212,14 +241,14 @@ const ZSProvider = (() => {
     if (!item) return "";
     if (isAssistantItem(item)) {
       // textWithout, never textContent - see the CodeMirror note there.
-      return [...item.querySelectorAll(S.reply)].map((m) => textWithout(m)).join("\n");
+      return replyNodes(item).map((m) => textWithout(m)).join("\n");
     }
     return textWithout(item);
   }
 
   function classifyText(item, excludeSel) {
     if (isAssistantItem(item)) {
-      return [...item.querySelectorAll(S.reply)]
+      return replyNodes(item)
         .filter((m) => !(excludeSel && m.closest(excludeSel)))
         .map((m) => textWithout(m, excludeSel)).join("\n");
     }
@@ -235,7 +264,9 @@ const ZSProvider = (() => {
   // reports an empty chat inside a conversation that is plainly full. That was
   // unfixable from a screenshot; report what the page DOES have instead.
   const TURN_PROBES = [
-    "[data-message-author-role]",
+    "[data-message-author-role]",  // builds up to 2026-09
+    "[data-turn-key]",             // current build (2026-11)
+    "[data-conversation-role]",
     "[data-message-id]",
     "[data-testid*='turn']",
     "[data-testid*='conversation']",
@@ -264,8 +295,38 @@ const ZSProvider = (() => {
     } catch {}
     diag("turns.notFound", { counts, samples });
   }
+  // 2026-11: turns are now tagged with data-turn-key (a UUID; the same value
+  // shows up as data-chatgpt-search-message-ids inside), and data-message-
+  // author-role no longer exists anywhere on the page. The legacy selector is
+  // tried first so older builds keep working exactly as before.
+  const TURN_SEL = "[data-turn-key]";
+  const LEGACY_TURN_SEL = "[data-message-author-role]";
+
+  // One node per turn. If a turn container ever holds BOTH roles (a question and
+  // its answer under one key) it is a pair, not a turn - split it, because the
+  // core would otherwise read the system prompt as model output, or vice versa.
+  function turnItems() {
+    const legacy = [...document.querySelectorAll(LEGACY_TURN_SEL)];
+    if (legacy.length) return legacy;
+    const keys = [...document.querySelectorAll(TURN_SEL)];
+    if (!keys.length) return [];
+    const out = [];
+    for (const k of keys) {
+      const marks = [...k.querySelectorAll(ROLE_SEL)];
+      const roles = new Set(marks.map((m) => m.getAttribute("data-conversation-role")));
+      if (roles.size <= 1) { out.push(k); continue; }
+      // Split: each role keeps the top-level section of the pair that holds it.
+      for (const m of marks) {
+        let n = m;
+        while (n.parentElement && n.parentElement !== k) n = n.parentElement;
+        out.push(n);
+      }
+    }
+    return out;
+  }
+
   const allItems = () => {
-    const items = [...document.querySelectorAll(S.msg)];
+    const items = turnItems();
     if (!items.length) {
       const now = Date.now();
       if (now - _turnMissAt > 10000) { _turnMissAt = now; turnMissReport(); } // rAF-hot: throttled
@@ -319,7 +380,7 @@ const ZSProvider = (() => {
       vis = [...document.querySelectorAll('[contenteditable="true"]')].filter(
         (el) =>
           el.offsetParent !== null &&
-          !el.closest(".cm-editor, .cm-content, [data-message-author-role], .markdown") &&
+          !el.closest(".cm-editor, .cm-content, " + LEGACY_TURN_SEL + "," + TURN_SEL + ", .markdown") &&
           (el.getBoundingClientRect().width || 0) > 120
       );
     } catch { return null; }
@@ -399,8 +460,14 @@ const ZSProvider = (() => {
   // a monotonic number, so the core's numeric "old id" shortcut simply doesn't
   // apply here (Number(uuid) is NaN and that guard is skipped) - the
   // settled-history guard covers the same case provider-agnostically.
-  const itemKey = (item) =>
-    (item && item.getAttribute ? item.getAttribute("data-message-id") : null) || null;
+  // data-turn-key is the 2026-11 name for the same UUID (it also appears as
+  // data-chatgpt-search-message-ids inside the turn); data-message-id is kept
+  // for older builds. Identity of the LAST turn is what makes "is this a new
+  // reply?" virtualization-proof, so this must never come back empty.
+  const itemKey = (item) => {
+    if (!item || !item.getAttribute) return null;
+    return item.getAttribute("data-message-id") || item.getAttribute("data-turn-key") || null;
+  };
   const lastAssistantId = () => itemKey(lastAssistant());
 
   const chatIsEmpty = () => allItems().length === 0;
@@ -664,7 +731,7 @@ const ZSProvider = (() => {
   function readAssistant() {
     const item = lastAssistant();
     if (!item) return { present: false, reply: "", thinking: "", item: null };
-    const mds = [...item.querySelectorAll(S.reply)];
+    const mds = replyNodes(item);
     return {
       present: true,
       reply: mds.map((m) => textWithout(m, ".zs-chip")).join("\n").trim(),
@@ -917,7 +984,7 @@ const ZSProvider = (() => {
     try {
       for (const el of document.querySelectorAll(S.errorSurfaces)) {
         if (el.offsetParent === null) continue;
-        if (el.closest(S.msg)) continue; // model content, not UI chrome
+        if (el.closest(LEGACY_TURN_SEL + "," + TURN_SEL)) continue; // model content, not UI chrome
         const t = (el.innerText || "").trim();
         if (t.length > 8 && t.length < 600 && RE.contextLimit.test(t)) return t.slice(0, 240);
       }
@@ -1081,7 +1148,7 @@ const ZSProvider = (() => {
   const CMD_CLOSE = /###\s*END_(?:LUA|MCP_TOOL)\s*###/i;
 
   function findToolBlockSpot(item /*, chip */) {
-    const replies = [...item.querySelectorAll(S.reply)];
+    const replies = replyNodes(item);
     let hidAny = null;
     const hide = (el, mc) => {
       el.classList.add("zs-tool-hide");

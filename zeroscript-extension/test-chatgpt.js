@@ -171,6 +171,61 @@ ta.isConnected = false;
 global.document.querySelectorAll = () => [];
 ok("no composer at all returns null instead of throwing", P.getEditor() === null);
 
+// ── Turn detection on the 2026-11 build ─────────────────────────────────────
+// data-message-author-role no longer exists anywhere on the page. Turns now
+// carry data-turn-key (the same UUID), and the role moved onto a screen-reader
+// heading INSIDE the turn: <h4 class="sr-only" data-conversation-role="user">.
+// ZeroScript matched zero turns, so the camouflage sweep hid nothing (the system
+// prompt and the command JSON stayed raw on screen), no command was ever read,
+// and the bar reported an empty chat inside a conversation that was plainly
+// full. Reported live as turns.notFound with all candidate counts at 0.
+function node(tag, attrs, kids) {
+  const n = {
+    tagName: tag, attrs: attrs || {}, childNodes: kids || [], parentElement: null,
+    isConnected: true, offsetParent: {}, classList: { contains: () => false },
+    getAttribute(k) { return k in this.attrs ? this.attrs[k] : null; },
+    closest() { return null; },
+  };
+  n.querySelectorAll = (sel) => {
+    const m = sel.match(/^\[([a-z-]+)(?:="([^"]*)")?\]$/i);
+    const out = [];
+    const walk = (x) => x.childNodes.forEach((c) => {
+      if (m && (m[2] !== undefined ? c.getAttribute(m[1]) === m[2] : c.getAttribute(m[1]) !== null)) out.push(c);
+      walk(c);
+    });
+    walk(n);
+    return out;
+  };
+  n.querySelector = (sel) => n.querySelectorAll(sel)[0] || null;
+  for (const k of n.childNodes) k.parentElement = n;
+  return n;
+}
+
+const userH4 = node("H4", { "data-conversation-role": "user" });
+const asstH4 = node("H4", { "data-conversation-role": "assistant" });
+const turnU = node("DIV", { "data-turn-key": "uuid-user" }, [userH4]);
+const turnA = node("DIV", { "data-turn-key": "uuid-asst" }, [asstH4]);
+
+global.document.querySelectorAll = (sel) =>
+  (sel === "[data-turn-key]" ? [turnU, turnA] : []);
+
+const turns = P.allItems();
+ok("turns are found by data-turn-key", turns.length === 2 && turns[0] === turnU);
+ok("the role is read from the heading inside the turn",
+   P.isUserItem(turnU) && P.isAssistantItem(turnA));
+ok("turn identity survives as data-turn-key", P.itemKey(turnU) === "uuid-user");
+ok("a full conversation is no longer reported as empty", P.chatIsEmpty() === false);
+
+// A container holding BOTH roles is a Q&A pair, not a turn: split it, or the
+// core reads the system prompt as model output (or the reply as the user's).
+const pairUser = node("DIV", {}, [userH4]);
+const pairAsst = node("DIV", {}, [asstH4]);
+const pair = node("DIV", { "data-turn-key": "uuid-pair" }, [pairUser, pairAsst]);
+global.document.querySelectorAll = (sel) => (sel === "[data-turn-key]" ? [pair] : []);
+const splitTurns = P.allItems();
+ok("a container holding both roles is split, not merged",
+   splitTurns.length === 2 && P.isUserItem(splitTurns[0]) && P.isAssistantItem(splitTurns[1]));
+
 // ── excludeSel ──────────────────────────────────────────────────────────────
 // The core passes ".zs-chip" so its own injected chip never counts as model
 // output (a chip echoing a tool name would otherwise re-trigger the call).

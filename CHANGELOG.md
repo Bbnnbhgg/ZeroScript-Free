@@ -5,6 +5,19 @@ All notable changes to ZeroScript Free are documented here.
 ## [1.5.6] - 2026-11-07
 
 ### Fixed
+- **ChatGPT: the agent runs again.** ChatGPT renamed the parts of the page that
+  mark each message: the tag that used to say "this message is from the user /
+  from the AI" is gone, and messages are now identified by `data-turn-key` with
+  the role on a hidden heading inside. ZeroScript matched nothing, which does not
+  degrade it - it makes it inert and silent: the startup prompt stayed on screen,
+  commands were never seen or run, and the panel reported an empty chat inside a
+  conversation that was plainly full. Turns and their author are now recognised
+  under both the old and the new naming.
+- **ChatGPT: replies are read even if the reply container is renamed.** The text
+  of a reply used to be read from one named container; on a build that renames
+  it, that read came back empty, so a command was never detected and its raw
+  JSON sat on screen. The whole message is now used when that container is
+  absent, which is never the case on builds that still have it.
 - **ChatGPT: the "Start Roblox agent" bar is back.** ChatGPT removed the
   `id="prompt-textarea"` tag from its input box - the composer is now a plain
   `<div class="ProseMirror" contenteditable="true">` - and ZeroScript looked for
