@@ -115,6 +115,43 @@ ok("blocks separate, inline text stays joined", /Running the command now:\nDone 
 // (A block closes with a trailing newline of its own - hence the optional \n.)
 ok("a <br> is a newline", /^a\nb\n?$/.test(P.textWithout(el("p", {}, ["a", el("br", {}), "b"]))));
 
+// ── The composer is resolved by ROLE, not by id ─────────────────────────────
+// 2026-10: ChatGPT dropped id="prompt-textarea" from the composer - it is a bare
+// <div class="ProseMirror" contenteditable="true"> now. Resolving it by id alone
+// returned null, and a missing editor reads as "not a chat page" all the way
+// down the provider: barMount() bailed, the core's floating fallback found
+// nothing to anchor to and hid the bar, so "Start Roblox agent" never appeared
+// (upstream #85, #100, #128). The id is still tried first so old builds are
+// untouched, but it must never be the ONLY way in.
+const fakeEl = (id) => ({
+  id, isConnected: true, offsetParent: {}, tagName: "DIV",
+  getAttribute: () => null, closest: () => null, querySelector: () => null,
+});
+const qsa = (map) => (sel) => map[sel] || [];
+
+const byId = fakeEl("prompt-textarea");
+global.document.querySelectorAll = qsa({ "#prompt-textarea": [byId] });
+ok("editor resolves by id when the build still has one", P.getEditor() === byId);
+
+// React swaps the composer and the id goes with it: the stale node is detached,
+// and only the ProseMirror shape remains. The cache must drop the dead node.
+byId.isConnected = false;
+const byRole = fakeEl("pm");
+global.document.querySelectorAll = qsa({
+  "form div.ProseMirror[contenteditable='true']": [byRole],
+});
+ok("editor resolves by role once the id is gone", P.getEditor() === byRole);
+
+// A match that is not on screen is not the composer an off-screen twin adopted
+// as THE editor would silently receive every injected message.
+byRole.isConnected = false;
+const hidden = fakeEl("hidden");
+hidden.offsetParent = null;
+global.document.querySelectorAll = qsa({
+  "div.ProseMirror[contenteditable='true']": [hidden],
+});
+ok("a hidden composer twin is skipped, not adopted", P.getEditor() === null);
+
 // ── excludeSel ──────────────────────────────────────────────────────────────
 // The core passes ".zs-chip" so its own injected chip never counts as model
 // output (a chip echoing a tool name would otherwise re-trigger the call).

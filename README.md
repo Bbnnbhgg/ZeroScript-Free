@@ -83,6 +83,10 @@ Go to https://chat.deepseek.com (recommended), https://chatgpt.com, https://gemi
 - Control play-testing
 - **Remember your project across sessions** persistent project memory saved inside your place
 
+## New in 1.5.6
+
+- **ChatGPT: the "Start Roblox agent" bar is back.** ChatGPT removed the name tag from its input box, and ZeroScript looked for the composer by that one name. Finding nothing, it decided the page was not a chat and hid its own bar - so the Start button never appeared, even though the bridge, Roblox Studio and all your tools were working fine. ZeroScript now recognises the composer by what it is, not by the name it happens to carry.
+
 ## New in 1.5.5
 
 - **DeepSeek: the agent starts again on the new unified model.** DeepSeek merged Instant, Expert and Vision into one model and removed the model picker, which left "Start Roblox agent" stuck on "DeepSeek mode not ready". ZeroScript now recognises the new chat box, switches Search off and starts, with DeepThink left on.

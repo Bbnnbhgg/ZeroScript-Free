@@ -2,6 +2,32 @@
 
 All notable changes to ZeroScript Free are documented here.
 
+## [1.5.6] - 2026-11-07
+
+### Fixed
+- **ChatGPT: the "Start Roblox agent" bar is back.** ChatGPT removed the
+  `id="prompt-textarea"` tag from its input box - the composer is now a plain
+  `<div class="ProseMirror" contenteditable="true">` - and ZeroScript looked for
+  the composer by that one id. Finding nothing, it concluded the page was not a
+  chat at all and hid its own bar, so the Start button never appeared and the
+  panel could report "the input box disappeared" on a perfectly healthy
+  conversation (#85, #100, #128). The bridge, Studio and the 28 tools were all
+  fine throughout; only the bar was missing.
+  ZeroScript now finds the composer by what it IS rather than by the name it
+  happens to carry, so the next rename costs nothing.
+- **ChatGPT: the bar mounts itself on the redesigned composer.** The 2026-10
+  build dropped the `composer-surface` container the bar used to sit in. When
+  that container is gone the bar now looks for the composer's own layout row and,
+  failing that, floats just above the input box instead of vanishing. It never
+  forces itself into a layout it cannot read: a wrong insertion is what collapsed
+  the text field to zero width in the past, so "float above it" is always the
+  safe fallback.
+- **ChatGPT: a renamed stop button can no longer be mistaken for send.** The
+  send and stop controls are the same button in two roles, and the role used to
+  be read from a single attribute. On a build that renamed it, ZeroScript would
+  have clicked "send" and cancelled a reply that was still being written. The
+  role is now read from the button's label too, in any language ChatGPT ships.
+
 ## [1.5.5] - 2026-09-10
 
 ### Fixed

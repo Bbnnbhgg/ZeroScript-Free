@@ -22,8 +22,13 @@
 //    Reasoning (thinking models) renders OUTSIDE .markdown, so reading only the
 //    .markdown naturally excludes drafts the model writes while reasoning.
 //  - The composer is a ProseMirror contenteditable: <div id="prompt-textarea"
-//    class="ProseMirror" contenteditable="true">. innerHTML assignment is unsafe;
-//    inject text via select-all + document.execCommand("insertText") (validated
+//    class="ProseMirror" contenteditable="true"> - BUT the id is GONE as of the
+//    2026-10 build, where it is a bare <div class="ProseMirror"
+//    contenteditable="true"> (the layout root there carries
+//    data-composer-layout / ComposerLayoutInput-* classes). getEditor() must
+//    therefore resolve it by ROLE, never by id - see the note there.
+//    innerHTML assignment is unsafe; inject text via select-all +
+//    document.execCommand("insertText") (validated
 //    to update ProseMirror/React state and enable the send button).
 //  - The send button is #composer-submit-button (data-testid="send-button"); it
 //    appears only once the composer has text. While generating, a stop button
@@ -70,10 +75,15 @@ const ZSProvider = (() => {
     editor: "#prompt-textarea",
     // The ONE submit control; its data-testid says whether it is currently a
     // send or a stop button (see isStopBtn). Id first - it survives testid churn.
-    submitBtn: "#composer-submit-button, button[data-testid='send-button'], button[data-testid='stop-button']",
+    // The composer-* / aria-label alternatives are APPENDED, never reordered:
+    // querySelector returns the first match in document order, so they can only
+    // ever win on a build where none of the first three matches anything - one
+    // that is already broken. (2026-10 builds renamed the testids to composer-*;
+    // the labelled buttons are what the logged-out form composes with.)
+    submitBtn: "#composer-submit-button, button[data-testid='send-button'], button[data-testid='stop-button'], button[data-testid='composer-send-button'], button[data-testid='composer-stop-button'], button[aria-label='Send message'], button[aria-label='Send prompt']",
     // Kept for installSendHooks, which needs to recognise a click on the native
     // stop control wherever it lives.
-    stopBtn: "button[data-testid='stop-button']",
+    stopBtn: "button[data-testid='stop-button'], button[data-testid='composer-stop-button'], button[aria-label='Stop streaming']",
     codeWrap: "pre",
     // composer frame: the <form> that wraps the ProseMirror editor.
     errorSurfaces: '[role="alert"],[data-testid*="error"],[class*="error-message"]',
@@ -221,7 +231,58 @@ const ZSProvider = (() => {
   const assistantItems = () => allItems().filter(isAssistantItem);
   const assistantCount = () => assistantItems().length;
   const userCount = () => allItems().filter(isUserItem).length;
-  const getEditor = () => document.querySelector(S.editor);
+  // 2026-10: ChatGPT dropped the id from the composer. It is now a bare
+  // <div class="ProseMirror" contenteditable="true"> (the same build also carries
+  // ComposerLayoutInput-* classes and data-composer-layout on the layout root),
+  // so resolving the editor by #prompt-textarea alone returned null - and EVERY
+  // consumer down the chain reads a missing editor as "this is not a chat page":
+  // barMount() bailed, the core's floating fallback found nothing to anchor to
+  // and hid the bar, so "Start Roblox agent" stopped appearing altogether
+  // (upstream #85, #100, #128), and scanError() reported "The input box
+  // disappeared (session ended?)" on a perfectly healthy conversation.
+  // Resolve the composer by ROLE instead of by id, trying the id FIRST so any
+  // build that still carries it is byte-for-byte unaffected.
+  //
+  // Cached, because getEditor() is called from the bar and cover rAF loops - i.e.
+  // once per frame. Re-running seven querySelectorAll plus an offsetParent read
+  // (which forces a style/layout flush) that often is exactly the kind of
+  // per-frame cost the core's stall detector exists to surface. The cache is
+  // dropped only when the node leaves the DOM, which is precisely when React
+  // swaps the composer, so a re-render is still picked up on the next call.
+  const EDITOR_SELECTORS = [
+    "#prompt-textarea",                             // builds up to 2026-09
+    "form div.ProseMirror[contenteditable='true']",  // current build (2026-10+)
+    "div.ProseMirror[contenteditable='true']",
+    "[contenteditable='true'][role='textbox']",
+    "textarea[name='prompt-textarea']",
+    "textarea#mobile-composer-prompt",               // logged-out form composer
+    "form div.ProseMirror",                          // last resort, composer-only
+  ];
+  let _edCache = null;
+  let _edVia = null;
+  function findEditor() {
+    for (const sel of EDITOR_SELECTORS) {
+      for (const el of document.querySelectorAll(sel)) {
+        if (el && el.offsetParent !== null) {
+          if (_edVia !== sel) {
+            _edVia = sel;
+            // A resolution that had to fall past the id means ChatGPT moved the
+            // composer again - the one breadcrumb worth leaving for the next
+            // breakage, logged once per change rather than once per frame.
+            if (sel !== EDITOR_SELECTORS[0]) diag("editor.resolved", { via: sel });
+          }
+          return el;
+        }
+      }
+    }
+    return null;
+  }
+  function getEditor() {
+    if (_edCache && _edCache.isConnected) return _edCache;
+    const ed = findEditor();
+    if (ed) _edCache = ed;
+    return ed;
+  }
   const editorText = () => {
     const e = getEditor();
     return e ? e.textContent || "" : "";
@@ -305,12 +366,49 @@ const ZSProvider = (() => {
     return null;
   }
 
+  // A first row that belongs to the INPUT rather than to a banner strip must
+  // never be claimed: mounting the bar into it seats bar and editor in the same
+  // grid cell, the same "input collapsed to zero width" failure from the other
+  // side. `body` is the current template's input row, `primary` the previous
+  // one's.
+  const INPUT_AREAS = /^(body|primary|input|editor|textarea|composer)$/;
+  function bannerArea(box) {
+    const a = topArea(box);
+    return a && !INPUT_AREAS.test(a) ? a : null;
+  }
+
+  // The 2026-10 build dropped the `composer-surface` class as well, so the lookup
+  // below found nothing and barMount() bailed - leaving the core to hide the bar
+  // entirely (see getEditor). Walk up from the editor to the first ancestor that
+  // opens with a full-width banner row instead: that shape is what "header
+  // header header", "eyebrow" and the current template all share, so it survives
+  // the next rename too. Bounded by the composer's own <form> so the walk can
+  // never reach the app shell's grid and mount the bar outside the composer.
+  function gridHost(ed) {
+    const limit = ed.closest("form") || ed.parentElement;
+    let n = ed.parentElement;
+    while (n) {
+      if (bannerArea(n)) return n;
+      if (n === limit) break;
+      n = n.parentElement;
+    }
+    return null;
+  }
+
   function barMount() {
     const ed = getEditor();
     if (!ed) return null;
-    const box = ed.closest("[class*='composer-surface']");
+    // ONLY ever mount inline when a full-width banner row was positively
+    // recognised. Anything else returns null on purpose: the core then falls
+    // back to the floating bar above the composer, which cannot disturb the
+    // site's layout at all. A wrong inline mount CAN (it collapses the input),
+    // so "no mount" is always the safer answer - and a floating bar is still
+    // infinitely better than the missing bar this used to produce.
+    const surface = ed.closest("[class*='composer-surface']");
+    const layout = ed.closest("[data-composer-layout]");
+    const box = [surface, layout].find((c) => c && bannerArea(c)) || gridHost(ed);
     if (!box) return null;
-    const area = topArea(box);
+    const area = bannerArea(box);
     if (area) {
       const bar = document.getElementById("zs-bar");
       if (bar && bar.style.gridArea !== area) bar.style.gridArea = area;
@@ -343,7 +441,16 @@ const ZSProvider = (() => {
   // sendButton() cheerfully returns the stop square and every guarded click is
   // refused. That is exactly what stranded a tool result in the composer and
   // raised "ChatGPT did not accept the injected message after 4 attempts".
-  const isStopBtn = (b) => !!b && b.getAttribute("data-testid") === "stop-button";
+  // Role, not just the 2026-08 testid: a renamed testid must never let a stop
+  // control pass as a send button, because clicking it aborts a live generation.
+  // The aria-label carries the role in every locale ChatGPT ships (en "Stop
+  // streaming", fr "Interrompre la réponse").
+  const isStopBtn = (b) => {
+    if (!b) return false;
+    const t = b.getAttribute("data-testid") || "";
+    if (t === "stop-button" || t === "composer-stop-button") return true;
+    return /stop|interrompre|arrêter/i.test(b.getAttribute("aria-label") || "");
+  };
   const submitButton = () => {
     const b = document.querySelector(S.submitBtn);
     return b && b.offsetParent !== null ? b : null;
