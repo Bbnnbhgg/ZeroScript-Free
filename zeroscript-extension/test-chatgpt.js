@@ -164,6 +164,13 @@ global.document.querySelectorAll = qsa({ "textarea[name='prompt-textarea']": [ta
 ok("a textarea composer is found", P.getEditor() === ta);
 ok("its text is read from .value, not textContent", P.editorText() === "hello");
 
+// A page where no composer exists at all (the logged-out page, or a build that
+// changed again) must report null rather than throw - and must drop the dead
+// cached node instead of handing out a composer that is no longer on screen.
+ta.isConnected = false;
+global.document.querySelectorAll = () => [];
+ok("no composer at all returns null instead of throwing", P.getEditor() === null);
+
 // ── excludeSel ──────────────────────────────────────────────────────────────
 // The core passes ".zs-chip" so its own injected chip never counts as model
 // output (a chip echoing a tool name would otherwise re-trigger the call).

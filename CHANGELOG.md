@@ -34,6 +34,11 @@ All notable changes to ZeroScript Free are documented here.
   rich-text editor. Text is read and written the way that control actually
   works - through its value, not as page content - so a message typed into it
   reaches ChatGPT instead of sitting in the box with the send button dead.
+- **ChatGPT: it says so when it cannot find the input box.** Up to now a
+  composer it did not recognise meant total silence - no bar, no error, nothing
+  to report back. It now writes one line to the browser console describing what
+  the page actually contains, so the next redesign is diagnosable from a single
+  screenshot instead of a round of guesswork.
 - **ChatGPT: a renamed stop button can no longer be mistaken for send.** The
   send and stop controls are the same button in two roles, and the role used to
   be read from a single attribute. On a build that renamed it, ZeroScript would

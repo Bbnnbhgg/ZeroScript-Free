@@ -300,11 +300,35 @@ const ZSProvider = (() => {
     }
     return soleEditable();
   }
+  // When the composer cannot be found the extension is invisible and silent -
+  // no bar, no error, nothing to report. Rather than make the user dig through
+  // the console with a hand-written probe, say what IS on the page: one diag
+  // line, throttled, because getEditor() runs from the bar's rAF loop every
+  // frame and an unthrottled log would bury everything else.
+  let _edMissAt = 0;
+  function editorMissReport() {
+    const counts = {};
+    for (const sel of EDITOR_SELECTORS) {
+      try { counts[sel] = document.querySelectorAll(sel).length; } catch { counts[sel] = "err"; }
+    }
+    let editables = [];
+    try {
+      editables = [...document.querySelectorAll('[contenteditable="true"]')]
+        .filter((el) => el.offsetParent !== null &&
+          !el.closest(".cm-editor, .cm-content, [data-message-author-role], .markdown"))
+        .slice(0, 4)
+        .map((el) => el.tagName + "." + String(el.className || "").trim().split(/\s+/).slice(0, 3).join(".") +
+          (el.id ? "#" + el.id : "") + "@" + Math.round(el.getBoundingClientRect().width) + "px");
+    } catch {}
+    diag("editor.notFound", { counts, editables });
+  }
   function getEditor() {
     if (_edCache && _edCache.isConnected) return _edCache;
     const ed = findEditor();
-    if (ed) _edCache = ed;
-    return ed;
+    if (ed) { _edCache = ed; _edMissAt = 0; return ed; }
+    const now = Date.now();
+    if (now - _edMissAt > 5000) { _edMissAt = now; editorMissReport(); }
+    return null;
   }
   // A <textarea> composer (the logged-out / mobile form) keeps its text in
   // .value, not in child nodes - textContent is empty there, so every test that
