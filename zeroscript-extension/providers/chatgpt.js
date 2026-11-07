@@ -325,11 +325,28 @@ const ZSProvider = (() => {
     return out;
   }
 
+  // Turns with no readable role is the other way this fails silently: every turn
+  // is found, but nothing is ever a user turn or an assistant turn, so the system
+  // prompt is not recognised as ours and no reply is ever read as a command.
+  // Same outcome as no turns at all - the agent sits there doing nothing - so it
+  // gets the same treatment: one throttled line naming what is on the page.
+  let _roleMissAt = 0;
   const allItems = () => {
     const items = turnItems();
     if (!items.length) {
       const now = Date.now();
       if (now - _turnMissAt > 10000) { _turnMissAt = now; turnMissReport(); } // rAF-hot: throttled
+    } else if (!items.some((it) => isUserItem(it) || isAssistantItem(it))) {
+      const now = Date.now();
+      if (now - _roleMissAt > 10000) {
+        _roleMissAt = now;
+        diag("turns.noRole", {
+          n: items.length,
+          sample: items.slice(0, 2).map((it) => it.tagName + "." +
+            String(it.className || "").trim().split(/\s+/).slice(0, 3).join(".") + " {" +
+            [...it.attributes].slice(0, 5).map((a) => a.name).join(" ") + "}"),
+        });
+      }
     }
     return items;
   };
